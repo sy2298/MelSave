@@ -82,13 +82,44 @@ def train(args):
         for epoch in itertools.count(1):
             for idx,(mel, audio) in enumerate(train_loader):
                 mel = mel.cuda()
-                coeffs=pywt.wavedec(audio,'db1',level=3,mode='periodic')
-                c1,c2,c3,c4=coeffs
-                temp=numpy.concatenate((c1[0][0],c2[0][0]),axis=0)
-                temp=numpy.concatenate((temp,c3[0][0]),axis=0)
-                temp=numpy.concatenate((temp,c4[0][0]),axis=0)
+                coeffs=pywt.wavedec(audio,'db1',level=2,mode='periodic')
+                c1,c2,c3=coeffs
+
+                new_c3 = []
+
+                c3 = c3[0][0]
+                c2 = c2[0][0]
+                c1 = c1[0][0]
+                sum = 0
+
+                #avg pooling ---- c3
+                for i in range(len(c3)):
+                    if i % 2 == 0:
+                        sum += c3[i]
+                        new_c3.append(sum / 2)
+                        sum = 0
+                    else :
+                        sum += c3[i]
+
+                #upsample c2
+                new_c2 = []
+                for i in range(len(c2)):
+                    if i == len(c2)-1:
+                        new_c2.append(c2[i])
+                        new_c2.append(c2[i])
+                    else :
+                        new_c2.append(c2[i])
+                        new_c2.append( (c2[i] + c2[i+1]) / 2 )
+
+
+                temp=numpy.concatenate((c1,new_c2),axis=0)
+                temp=numpy.concatenate((temp,new_c3),axis=0)
                 arr2 = numpy.array([[temp]])
                 arr3 = torch.from_numpy(arr2).float()
+
+
+
+                fake_audio = arr3.cuda()
 
                 audio = arr3.cuda()
 
@@ -101,11 +132,48 @@ def train(args):
 
                 fake_audio = G(mel)
                 #############################
+                #Wavelet Transform
+                fake_audio=(fake_audio.cuda()).detach().cpu().clone().numpy()
+                f_coeffs=pywt.wavedec(fake_audio,'db1',level=2,mode='periodic')
+                f_c1,f_c2,f_c3=f_coeffs
+
+                f_c1 = f_c1[0][0]
+                f_c2 = f_c2[0][0]
+                f_c3 = f_c3[0][0]
+                sum = 0
+
+                new_f_c3 = []
+                #avg pooling ---- c3
+                for i in range(len(f_c3)):
+                    if i % 2 == 0:
+                        sum += f_c3[i]
+                        new_f_c3.append(sum / 2)
+                        sum = 0
+                    else :
+                        sum += f_c3[i]
+
+                #upsample c2
+                new_f_c2 = []
+                for i in range(len(f_c2)):
+                    if i == len(f_c2)-1:
+                        new_f_c2.append(f_c2[i])
+                        new_f_c2.append(f_c2[i])
+                    else :
+                        new_f_c2.append(f_c2[i])
+                        new_f_c2.append( (f_c2[i] + f_c2[i+1]) / 2 )
+
+
+                temp=numpy.concatenate((f_c1,new_f_c2),axis=0)
+                temp=numpy.concatenate((temp,new_f_c3),axis=0)
+                arr2 = numpy.array([[temp]])
+                arr3 = torch.from_numpy(arr2).float()
+
+                fake_audio = arr3.cuda()
 
 
                 #print(len(d_fake[0]))  -----> 출력값 : 7
                 #print(len(d_fake))     -----> 출력값 : 3
-                d_fake = D(fake_audio.cuda().detach())
+                d_fake = D(fake_audio)
                 d_loss_fake = 0
                 for scale in d_fake:
                     d_loss_fake += F.relu(1 + scale[-1]).mean()
@@ -154,21 +222,57 @@ def train(args):
                                                    22050,
                                                    audio.astype('int16'))
                 '''
-                if step % 10 == 0:
+                if step % 1000 == 0:
+                    #print('ddddd')
                     root = Path(args.save_dir)
                     with torch.no_grad():
                         for i, mel_test in enumerate(testset):
                             g_audio = G(mel_test.cuda())
                             g_audio = g_audio.squeeze().cpu().clone().numpy()
-                            std_=int(g_audio.shape[0]/8)
 
-                            coeffs_=[ g_audio[0:std_],g_audio[std_:std_*2],g_audio[std_*2:std_*4],g_audio[std_*4:std_*8] ]
+                            std_=int(g_audio.shape[0]/4)
+                            g1 = g_audio[0:std_]
+                            g2 = g_audio[std_:std_*3]
+                            # 반으로 줄이고
+                            new_g2 = []
+                            for k in range(len(g2)):
+                                if k % 2 == 0:
+                                    sum += g2[k]
+                                    new_g2.append(sum / 2)
+                                    sum = 0
+                                else :
+                                    sum += g2[k]
+
+
+                            g3 = g_audio[std_*3:std_*4]
+                            # 두배로 늘리고
+                            #upsample c2
+                            new_g3 = []
+                            for k in range(len(g3)):
+                                if k == len(g3)-1:
+                                    new_g3.append(g3[k])
+                                    new_g3.append(g3[k])
+                                else :
+                                    new_g3.append(g3[k])
+                                    new_g3.append( (g3[k] + g3[k+1]) / 2 )
+                            new_g2 = numpy.array(new_g2)
+                            new_g3 = numpy.array(new_g3)
+
+                            coeffs_=[ g1, new_g2, new_g3 ]
                             y = pywt.waverec(coeffs_,'db1',mode='periodic')
                            # y = numpy.asarray(y,dtype=numpy.int16)
                             y = numpy.int16(y/numpy.max(numpy.abs(y))*32767)
-                            wavfile.write(root / ('g211enerated-%d-%dk-%d.wav' % (epoch, step // 10, i)),
+                            wavfile.write(root / ('wavelet-%d-%dk-%d.wav' % (epoch, step //1000 , i)),
                                                    22050, y)
 
+                        for i, mel_test in enumerate(testset):
+                            g_audio = G(mel_test.cuda())
+                            g_audio = g_audio.squeeze().cpu()
+                            print('g audio : ', g_audio.shape)
+                            audio = (g_audio.numpy() * 32768)
+                            scipy.io.wavfile.write(root / ('no_wavelet-%d-%dk-%d.wav' % (epoch, step//1000, i)),
+                                                   22050,
+                                                   audio.astype('int16'))
 
                     print("Saving checkpoint")
                     torch.save({
@@ -195,7 +299,7 @@ if __name__ == "__main__":
     parser.add_argument("--valid_dir", default='./valid')
     parser.add_argument("--test_num", default=2)
     parser.add_argument("--hop_length", default=256)
-    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--seq_len", type=int, default=32)
     parser.add_argument("--test_len", type=int, default=300)
     parser.add_argument("--lambda_feat", default=10)
@@ -205,3 +309,4 @@ if __name__ == "__main__":
     save_dir = os.path.join(args.save_dir)
     os.makedirs(save_dir, exist_ok=True)
     train(args)
+

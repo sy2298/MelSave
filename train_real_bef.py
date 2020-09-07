@@ -76,11 +76,12 @@ def train(args):
         print('Load Status: Epochs %d, Step %d' % (epochs, step))
 
     torch.backends.cudnn.benchmark = True
-
     start = time.time()
     try:
+        checks=1
         for epoch in itertools.count(1):
             for idx,(mel, audio) in enumerate(train_loader):
+                #('audio : ',audio)
                 mel = mel.cuda()
                 coeffs=pywt.wavedec(audio,'db1',level=2,mode='periodic')
                 c1,c2,c3=coeffs
@@ -133,7 +134,8 @@ def train(args):
                 fake_audio = G(mel)
                 #############################
                 #Wavelet Transform
-                fake_audio=(fake_audio.cuda()).detach().cpu().clone().numpy()
+                d_fake = D(fake_audio.cuda().detach())
+                '''
                 f_coeffs=pywt.wavedec(fake_audio,'db1',level=2,mode='periodic')
                 f_c1,f_c2,f_c3=f_coeffs
 
@@ -165,15 +167,16 @@ def train(args):
 
                 temp=numpy.concatenate((f_c1,new_f_c2),axis=0)
                 temp=numpy.concatenate((temp,new_f_c3),axis=0)
+
                 arr2 = numpy.array([[temp]])
                 arr3 = torch.from_numpy(arr2).float()
 
                 fake_audio = arr3.cuda()
-
+                '''
 
                 #print(len(d_fake[0]))  -----> 출력값 : 7
                 #print(len(d_fake))     -----> 출력값 : 3
-                d_fake = D(fake_audio)
+                #d_fake = D(fake_audio)
                 d_loss_fake = 0
                 for scale in d_fake:
                     d_loss_fake += F.relu(1 + scale[-1]).mean()
@@ -226,6 +229,7 @@ def train(args):
                     #print('ddddd')
                     root = Path(args.save_dir)
                     with torch.no_grad():
+
                         for i, mel_test in enumerate(testset):
                             g_audio = G(mel_test.cuda())
                             g_audio = g_audio.squeeze().cpu().clone().numpy()
@@ -255,21 +259,25 @@ def train(args):
                                 else :
                                     new_g3.append(g3[k])
                                     new_g3.append( (g3[k] + g3[k+1]) / 2 )
+
+
                             new_g2 = numpy.array(new_g2)
                             new_g3 = numpy.array(new_g3)
 
                             coeffs_=[ g1, new_g2, new_g3 ]
+
                             y = pywt.waverec(coeffs_,'db1',mode='periodic')
                            # y = numpy.asarray(y,dtype=numpy.int16)
                             y = numpy.int16(y/numpy.max(numpy.abs(y))*32767)
+
                             wavfile.write(root / ('wavelet-%d-%dk-%d.wav' % (epoch, step //1000 , i)),
                                                    22050, y)
 
                         for i, mel_test in enumerate(testset):
                             g_audio = G(mel_test.cuda())
                             g_audio = g_audio.squeeze().cpu()
-                            print('g audio : ', g_audio.shape)
                             audio = (g_audio.numpy() * 32768)
+
                             scipy.io.wavfile.write(root / ('no_wavelet-%d-%dk-%d.wav' % (epoch, step//1000, i)),
                                                    22050,
                                                    audio.astype('int16'))
@@ -309,4 +317,3 @@ if __name__ == "__main__":
     save_dir = os.path.join(args.save_dir)
     os.makedirs(save_dir, exist_ok=True)
     train(args)
-
